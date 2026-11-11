@@ -1,0 +1,34 @@
+# {{.Title}}
+
+由 [errata](https://github.com/chhongzh/errata) 管理。本文件由 `errata build` 根据 [`.errata/README.md.tmpl`](.errata/README.md.tmpl) 生成，请改模板而不是本文件。
+
+共 **{{.Total}}** 题。
+{{if .Recent}}
+## 最近添加
+
+| 日期 | 题号 | 标题 | 科目 | 题型 |
+| --- | --- | --- | --- | --- |
+{{range .Recent}}| {{.Created}} | [{{.ID}}](problems/{{.ID}}.md) | {{.Title}} | [{{.Subject}}](by-subject/{{.SubjectDir}}/) | [{{.Type}}](by-type/{{.TypeDir}}/) |
+{{end}}{{end}}{{if .Subjects}}
+## 科目
+
+{{range .Subjects}}- [{{.Name}}](by-subject/{{.Dir}}/) ({{.Count}})
+{{end}}{{end}}{{if .Types}}
+## 题型
+
+{{range .Types}}- [{{.Name}}](by-type/{{.Dir}}/) ({{.Count}})
+{{end}}{{end}}{{if .Tags}}
+## 标签
+
+{{range .Tags}}- [{{.Name}}](by-tag/{{.Dir}}/) ({{.Count}})
+{{end}}{{end}}
+## 目录结构
+
+- [`problems/`](problems/): 所有题目（P1.md, P2.md ...），不分科目
+- [`by-subject/`](by-subject/): 按科目分类（指向 problems/ 的软链接）
+- [`by-tag/`](by-tag/): 按标签分类（软链接）
+- [`by-type/`](by-type/): 按题型分类（软链接）
+- [`assets/`](assets/): 题目里引用的图片
+- [`docs/`](docs/): GitHub Pages 静态站点（生成）
+- [`.errata/`](.errata/): 配置与本 README 的模板
+- `staging/`: 本地草稿区，不入库
