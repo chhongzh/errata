@@ -104,7 +104,8 @@ func Readme(r *store.Repo, ps []*store.Problem) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-type siteProblem struct {
+// siteSummary is one row of index.json: everything the list and filters need, no bodies.
+type siteSummary struct {
 	ID         string   `json:"id"`
 	Title      string   `json:"title"`
 	Subject    string   `json:"subject"`
@@ -113,17 +114,21 @@ type siteProblem struct {
 	Source     string   `json:"source"`
 	Difficulty int      `json:"difficulty"`
 	Created    string   `json:"created"`
-	StemText   string   `json:"stem_text"`
-	Stem       string   `json:"stem"`
-	Answer     string   `json:"answer"`
-	Solution   string   `json:"solution"`
 }
 
-type siteData struct {
+type siteIndex struct {
 	Title    string        `json:"title"`
 	Subjects []store.Named `json:"subjects"`
 	Types    []store.Named `json:"types"`
-	Problems []siteProblem `json:"problems"`
+	Problems []siteSummary `json:"problems"`
+}
+
+// siteDetail is p/<ID>.json, fetched when a problem is opened.
+type siteDetail struct {
+	ID       string `json:"id"`
+	Stem     string `json:"stem"`
+	Answer   string `json:"answer"`
+	Solution string `json:"solution"`
 }
 
 func ids(list []store.Named) []string {
@@ -155,21 +160,22 @@ func SiteFiles(r *store.Repo, ps []*store.Problem) (map[string][]byte, error) {
 		return nil, err
 	}
 
-	data := siteData{Title: r.Cfg.Title, Subjects: r.Cfg.Subjects, Types: r.Cfg.Types, Problems: []siteProblem{}}
+	index := siteIndex{Title: r.Cfg.Title, Subjects: r.Cfg.Subjects, Types: r.Cfg.Types, Problems: []siteSummary{}}
+	search := map[string]string{} // id -> plain stem, loaded lazily on first search
 	for i := len(ps) - 1; i >= 0; i-- {
 		p := ps[i]
-		sp := siteProblem{
+		sum := siteSummary{
 			ID: p.ID, Title: p.Meta.Title, Subject: p.Meta.Subject, Type: p.Meta.Type, Tags: p.Meta.Tags,
 			Source: p.Meta.Source, Difficulty: p.Meta.Difficulty, Created: p.Meta.Created,
-			StemText: p.Sections[store.SecStem],
 		}
-		if sp.Tags == nil {
-			sp.Tags = []string{}
+		if sum.Tags == nil {
+			sum.Tags = []string{}
 		}
+		det := siteDetail{ID: p.ID}
 		for _, f := range []struct {
 			name string
 			dst  *string
-		}{{store.SecStem, &sp.Stem}, {store.SecAnswer, &sp.Answer}, {store.SecSolution, &sp.Solution}} {
+		}{{store.SecStem, &det.Stem}, {store.SecAnswer, &det.Answer}, {store.SecSolution, &det.Solution}} {
 			if src := p.Sections[f.name]; src != "" {
 				h, err := render.Markdown(src)
 				if err != nil {
@@ -178,15 +184,23 @@ func SiteFiles(r *store.Repo, ps []*store.Problem) (map[string][]byte, error) {
 				*f.dst = strings.ReplaceAll(h, `src="../assets/`, `src="assets/`)
 			}
 		}
-		data.Problems = append(data.Problems, sp)
+		if stem := p.Sections[store.SecStem]; stem != "" {
+			search[p.ID] = stem
+		}
+		js, err := json.Marshal(det)
+		if err != nil {
+			return nil, err
+		}
+		out["p/"+p.ID+".json"] = js
+		index.Problems = append(index.Problems, sum)
 	}
-	js, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
+	for name, v := range map[string]any{"index.json": index, "search.json": search} {
+		js, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		out[name] = js
 	}
-	// "</" would end the inline script context if data.js is ever inlined.
-	js = bytes.ReplaceAll(js, []byte("</"), []byte(`<\/`))
-	out["data.js"] = append([]byte("window.ERRATA = "), append(js, ';', '\n')...)
 	out[".nojekyll"] = []byte{}
 	if err := copyAssets(r, out); err != nil {
 		return nil, err

@@ -55,3 +55,5 @@ go-git 实现，不依赖系统 git。HTTPS 用 `GITHUB_TOKEN`，SSH 用 ssh-age
 ## 发布
 
 GitHub Pages 选择 `main` 分支的 `/docs` 目录。站点从 jsDelivr 加载 Bootstrap、jQuery、KaTeX。
+
+站点数据按需加载，不会把整个题库塞进一个脚本：`index.json` 只含列表和筛选所需的元数据，`p/<ID>.json` 是单题的题干/答案/解析（打开题目时才取），`search.json` 是题干纯文本（第一次搜索时才取），图片在 `assets/`。需通过 HTTP 访问，不能直接双击 `index.html`。

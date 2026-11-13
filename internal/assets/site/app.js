@@ -1,6 +1,11 @@
 $(function () {
-  var DATA = window.ERRATA || { problems: [] };
+  var DATA = { problems: [] };
   var P = DATA.problems;
+  var PAGE = 100;
+  var limit = PAGE;
+  var STEMS = null; // id -> plain stem, fetched on first search
+  var stemsLoading = null;
+  var details = {};
   var state = { subject: '', type: '', tags: [], q: '' };
   var shown = [];
   var modal = new bootstrap.Modal(document.getElementById('detail'));
@@ -22,8 +27,6 @@ $(function () {
   applyTheme();
 
   var NAMES = { subject: {}, type: {} };
-  (DATA.subjects || []).forEach(function (x) { NAMES.subject[x.id] = x.name; });
-  (DATA.types || []).forEach(function (x) { NAMES.type[x.id] = x.name; });
   function nameOf(kind, id) { return NAMES[kind][id] || id; }
   function count(key) {
     var m = {};
@@ -52,9 +55,8 @@ $(function () {
     $root.find('pre').addClass('border rounded p-2');
   }
   function hay(p) {
-    return [p.id, p.title, p.tags.join(' '), p.subject, nameOf('subject', p.subject), p.type, nameOf('type', p.type), p.source, p.stem_text].join(' ').toLowerCase();
+    return [p.id, p.title, p.tags.join(' '), p.subject, nameOf('subject', p.subject), p.type, nameOf('type', p.type), p.source].join(' ').toLowerCase();
   }
-  P.forEach(function (p) { p._hay = hay(p); });
 
   function item(label, n, active, attrs) {
     return $('<button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">')
@@ -78,32 +80,44 @@ $(function () {
     });
   }
   $('#f-subject').on('click', '[data-subject]', function () {
-    var v = $(this).data('subject'); state.subject = state.subject === v ? '' : v; refresh();
+    var v = $(this).data('subject'); state.subject = state.subject === v ? '' : v; limit = PAGE; refresh();
   });
   $('#f-type').on('click', '[data-type]', function () {
-    var v = $(this).data('type'); state.type = state.type === v ? '' : v; refresh();
+    var v = $(this).data('type'); state.type = state.type === v ? '' : v; limit = PAGE; refresh();
   });
   $('#f-tag').on('click', '[data-tag]', function () {
     var v = String($(this).data('tag')), i = state.tags.indexOf(v);
     if (i >= 0) state.tags.splice(i, 1); else state.tags.push(v);
+    limit = PAGE;
     refresh();
   });
   $('#reset').on('click', function () {
-    state = { subject: '', type: '', tags: [], q: '' }; $('#q').val(''); refresh();
+    state = { subject: '', type: '', tags: [], q: '' }; limit = PAGE; $('#q').val(''); refresh();
   });
-  $('#q').on('input', function () { state.q = $(this).val().trim().toLowerCase(); refresh(); });
+  function loadStems() {
+    if (!stemsLoading) {
+      stemsLoading = fetchJSON('search.json').then(function (m) { STEMS = m; refresh(); });
+    }
+    return stemsLoading;
+  }
+  $('#q').on('input', function () {
+    state.q = $(this).val().trim().toLowerCase();
+    limit = PAGE;
+    refresh();
+    if (state.q) loadStems();
+  });
 
   function match(p) {
     if (state.subject && p.subject !== state.subject) return false;
     if (state.type && p.type !== state.type) return false;
     for (var i = 0; i < state.tags.length; i++) if (p.tags.indexOf(state.tags[i]) < 0) return false;
-    if (state.q && p._hay.indexOf(state.q) < 0) return false;
+    if (state.q && p._hay.indexOf(state.q) < 0 && !(STEMS && (STEMS[p.id] || '').toLowerCase().indexOf(state.q) >= 0)) return false;
     return true;
   }
   function renderList() {
     shown = P.filter(match);
     var $l = $('#list').empty();
-    shown.forEach(function (p) {
+    shown.slice(0, limit).forEach(function (p) {
       var $tags = $('<span class="d-flex flex-wrap gap-1">');
       p.tags.forEach(function (t) { $tags.append($('<span class="badge text-bg-light border">').text(t)); });
       $l.append($('<a class="list-group-item list-group-item-action d-flex flex-wrap align-items-center gap-2">')
@@ -114,12 +128,26 @@ $(function () {
          $('<span class="badge text-bg-info">').text(nameOf('type', p.type)),
   $tags));
     });
+    $('#more').toggleClass('d-none', shown.length <= limit);
     $('#count').text('共 ' + shown.length + ' / ' + P.length + ' 题');
     $('#empty').toggleClass('d-none', shown.length > 0);
   }
   function refresh() { renderFilters(); renderList(); }
+  $('#more').on('click', function () { limit += PAGE; renderList(); });
 
   var current = null;
+  function fetchJSON(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url + ' ' + r.status);
+      return r.json();
+    });
+  }
+  function loadDetail(id) {
+    if (!details[id]) {
+      details[id] = fetchJSON('p/' + encodeURIComponent(id) + '.json').catch(function (e) { delete details[id]; throw e; });
+    }
+    return details[id];
+  }
   function show(id) {
     var p = P.find(function (x) { return x.id === id; });
     if (!p) return;
@@ -130,17 +158,30 @@ $(function () {
        $('<span class="badge text-bg-info">').text(nameOf('type', p.type)));
     p.tags.forEach(function (t) { $m.append($('<span class="badge text-bg-light border">').text(t)); });
     if (p.difficulty) $m.append($('<span class="badge text-bg-warning">').text('难度 ' + p.difficulty + '/5'));
-    $('#d-stem').html(p.stem);
-    $('#d-answer').html(p.answer);
-    $('#d-solution').html(p.solution);
-    $('#d-answer-wrap').toggle(!!p.answer);
-    $('#d-solution-wrap').toggle(!!p.solution);
+    $('#d-source').text([p.source, p.created].filter(Boolean).join(' · '));
+    $('#d-stem').html('<span class="text-body-secondary">加载中…</span>');
+    $('#d-answer-wrap, #d-solution-wrap').hide();
     $('#d-acc .accordion-collapse').removeClass('show');
     $('#d-acc .accordion-button').addClass('collapsed');
-    $('#d-source').text([p.source, p.created].filter(Boolean).join(' · '));
-    decorate($('#detail .modal-body'));
-    typeset(document.getElementById('detail'));
     modal.show();
+    loadDetail(id).then(function (d) {
+      if (current !== p) return;
+      $('#d-stem').html(d.stem);
+      $('#d-answer').html(d.answer);
+      $('#d-solution').html(d.solution);
+      $('#d-answer-wrap').toggle(!!d.answer);
+      $('#d-solution-wrap').toggle(!!d.solution);
+      decorate($('#detail .modal-body'));
+      typeset(document.getElementById('detail'));
+      // warm the neighbours so 上一题 / 下一题 feel instant
+      var i = shown.indexOf(p);
+      [1, -1].forEach(function (o) {
+ var n = shown[i + o];
+        if (n) loadDetail(n.id).catch(function () {});
+      });
+    }, function () {
+      if (current === p) $('#d-stem').html('<span class="text-danger">题目加载失败</span>');
+    });
   }
   function step(d) {
     if (!current || !shown.length) return;
@@ -167,6 +208,16 @@ $(function () {
   });
   $(window).on('hashchange', function () { if (location.hash.length > 1) show(location.hash.slice(1)); });
 
-  refresh();
-  if (location.hash.length > 1) show(location.hash.slice(1));
+  fetchJSON('index.json').then(function (d) {
+    DATA = d;
+    P = d.problems;
+    (d.subjects || []).forEach(function (x) { NAMES.subject[x.id] = x.name; });
+    (d.types || []).forEach(function (x) { NAMES.type[x.id] = x.name; });
+    P.forEach(function (p) { p._hay = hay(p); });
+    refresh();
+    if (location.hash.length > 1) show(location.hash.slice(1));
+  }, function () {
+    $('#count').text('');
+    $('#empty').removeClass('d-none').text('题库加载失败（请通过 HTTP 访问，不能直接打开 file://）');
+  });
 });
